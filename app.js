@@ -80,42 +80,54 @@ function setButtons() {
 // KIỂM TRA THIẾT BỊ
 // ==========================================
 
+
 async function initialize() {
-  status("gpuStatus", "Đang kiểm tra WebGPU...");
+  status("gpuStatus", "Đang kiểm tra khả năng chạy AI...");
 
   if (!navigator.gpu) {
-    status("gpuStatus", "Không phát hiện WebGPU.");
-    status("modelStatus", "Thiết bị chưa hỗ trợ WebGPU.");
-
-    if ($("loadModel")) {
-      $("loadModel").disabled = true;
-    }
+    status("gpuStatus", "Safari không cung cấp WebGPU.");
+    status("modelStatus", "Không thể chạy AI cục bộ trên trình duyệt này.");
+    $("loadModel").disabled = true;
     return;
   }
 
-  status("gpuStatus", "Đã phát hiện WebGPU.");
+  try {
+    const adapter = await navigator.gpu.requestAdapter();
 
-  // Không bắt buộc phải có modelSelect trong HTML
-  if ($("modelSelect")) {
-    $("modelSelect").innerHTML = "";
+    if (!adapter) {
+      throw new Error("Không tìm thấy GPU adapter.");
+    }
 
-    const option = document.createElement("option");
-    option.value = MODEL_ID;
-    option.textContent = "Qwen 2.5 0.5B - bản nhẹ";
+    const device = await adapter.requestDevice();
 
-    $("modelSelect").appendChild(option);
-    $("modelSelect").disabled = false;
-  }
+    device.destroy();
 
-  if ($("loadModel")) {
+    status("gpuStatus", "WebGPU đã được kiểm tra và có thể sử dụng.");
+
     $("loadModel").disabled = false;
-  }
 
-  status(
-    "modelStatus",
-    "Đã chọn Qwen 0.5B. Sẵn sàng tải mô hình."
-  );
+    status(
+      "modelStatus",
+      "Sẵn sàng thử tải Qwen 2.5 0.5B."
+    );
+
+  } catch (error) {
+    console.error(error);
+
+    status(
+      "gpuStatus",
+      "WebGPU không khởi tạo được: " + errorText(error)
+    );
+
+    status(
+      "modelStatus",
+      "Không thể khởi chạy GPU trên thiết bị."
+    );
+
+    $("loadModel").disabled = true;
+  }
 }
+
 // ==========================================
 // TẢI MÔ HÌNH AI
 // ==========================================
