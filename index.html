@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#123d5a">
+<title>MEDICAL BOOK AI</title>
+<link rel="manifest" href="manifest.webmanifest">
+<style>
+:root{--navy:#123d5a;--blue:#176b9b;--teal:#16856b;--bg:#f3f7fa;--ink:#172b3a;--muted:#647887;--line:#dce6ec}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+header{background:linear-gradient(120deg,#123d5a,#176b9b);color:white;padding:22px 18px 25px}
+header h1{font-size:22px;margin:0 0 5px}header p{margin:0;color:#d8eaf4;font-size:13px}
+main{max-width:760px;margin:auto;padding:16px;display:grid;gap:14px}
+.card{background:white;border:1px solid var(--line);border-radius:16px;padding:16px;box-shadow:0 3px 12px #123d5a0a}
+h2{font-size:17px;margin:0 0 12px}.muted{color:var(--muted);font-size:13px;line-height:1.5}
+button,.filelabel{border:0;border-radius:12px;padding:13px 15px;background:var(--blue);color:white;font-weight:650;font-size:15px;display:inline-flex;align-items:center;justify-content:center;gap:8px;cursor:pointer}
+button:disabled{opacity:.45;cursor:not-allowed}.secondary{background:#eaf2f7;color:var(--navy)}.green{background:var(--teal);width:100%;margin-top:12px}
+input[type=file]{display:none}.filebox{border:1.5px dashed #9db5c4;border-radius:14px;padding:20px;text-align:center;background:#f8fbfd}
+#fileName{font-weight:650;margin-top:10px;overflow-wrap:anywhere}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.row>*{flex:1}
+.status{padding:10px 12px;background:#edf5f8;border-radius:10px;font-size:13px;line-height:1.45}
+.progress{height:9px;background:#e6edf1;border-radius:20px;overflow:hidden;margin:10px 0}.bar{height:100%;width:0;background:var(--teal);transition:width .2s}
+.metric{display:flex;justify-content:space-between;font-size:13px;color:var(--muted);gap:10px}
+textarea{width:100%;min-height:130px;border:1px solid var(--line);border-radius:12px;padding:12px;font:14px/1.5 inherit;color:var(--ink)}
+#output{white-space:pre-wrap;max-height:320px;overflow:auto;background:#f8fbfd;border-radius:10px;padding:12px;font-size:13px;line-height:1.55}
+.small{font-size:12px}.warning{border-left:4px solid #d79b31;background:#fff8e9;padding:12px;border-radius:8px;font-size:13px;line-height:1.5}
+footer{text-align:center;color:var(--muted);font-size:11px;padding:8px 20px 28px}
+</style>
+</head>
+<body>
+<header><h1>MEDICAL BOOK AI</h1><p>Đọc và dịch sách y khoa ngay trên thiết bị · Bản thử nghiệm Web</p></header>
+<main>
+<section class="card">
+<h2>1. Chọn sách PDF</h2>
+<div class="filebox">
+<div style="font-size:30px">📘</div>
+<p style="margin:7px 0;color:#647887">Chọn một tệp PDF từ iPhone</p>
+<label class="filelabel" for="pdfFile">Chọn sách PDF</label>
+<input id="pdfFile" type="file" accept="application/pdf,.pdf">
+<div id="fileName" class="muted">Chưa chọn tài liệu</div>
+</div>
+<p class="muted">Bản thử nghiệm hiện trích xuất văn bản PDF có sẵn. PDF scan cần bổ sung OCR ở giai đoạn tiếp theo.</p>
+</section>
+<section class="card">
+<h2>2. Bộ não AI trên trình duyệt</h2>
+<div id="gpuStatus" class="status">Đang kiểm tra khả năng WebGPU…</div>
+<div class="row" style="margin-top:12px">
+<button id="loadModel">Tải và khởi động AI</button>
+<button id="newSession" class="secondary">Phiên mới</button>
+</div>
+<div class="progress"><div class="bar" id="modelBar"></div></div>
+<div id="modelStatus" class="muted">Mô hình chưa được tải. Lần đầu cần Internet để tải mô hình về bộ nhớ trình duyệt.</div>
+</section>
+<section class="card">
+<h2>3. Xử lý sách tự động</h2>
+<div class="warning">Thử nghiệm đầu tiên dùng mô hình nhỏ Qwen2.5 0.5B. Mô hình này chỉ để kiểm tra khả năng chạy trên Safari, chưa được xác nhận đủ chính xác cho dịch thuật y khoa chuyên nghiệp.</div>
+<div class="metric" style="margin-top:14px"><span id="pageCount">0 trang đã đọc</span><span id="chunkCount">0 đoạn</span></div>
+<div class="progress"><div class="bar" id="workBar"></div></div>
+<div id="workStatus" class="status">Chọn PDF và tải AI để bắt đầu.</div>
+<button id="start" class="green" disabled>▶ BẮT ĐẦU XỬ LÝ TỰ ĐỘNG</button>
+<div class="row" style="margin-top:10px">
+<button id="pause" class="secondary" disabled>Tạm dừng</button>
+<button id="export" class="secondary" disabled>Xuất bản dịch TXT</button>
+</div>
+</section>
+<section class="card">
+<h2>4. Kết quả dịch</h2>
+<div id="output">Bản dịch sẽ xuất hiện tại đây theo từng đoạn.</div>
+</section>
+<section class="card">
+<h2>5. Kiểm tra nhanh thuật ngữ</h2>
+<p class="muted">Dùng để thử trực tiếp một đoạn ngắn sau khi AI đã tải xong.</p>
+<textarea id="testText" placeholder="Dán một đoạn tiếng Anh y khoa vào đây…">A 65-year-old patient presents with chronic low back pain radiating to the right lower extremity. Physical examination reveals tenderness over the lumbar paraspinal muscles and limited lumbar range of motion. The straight leg raise test is positive at 40 degrees.</textarea>
+<button id="testTranslate" style="margin-top:10px" disabled>Dịch thử đoạn văn</button>
+</section>
+</main>
+<footer>Dữ liệu PDF và bản dịch được xử lý trong trình duyệt. Không gửi tài liệu lên máy chủ AI của ứng dụng. Đây là bản MVP kỹ thuật, chưa dùng cho quyết định lâm sàng.</footer>
+<script type="module" src="app.js"></script>
+</body></html>
