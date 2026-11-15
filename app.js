@@ -1,13 +1,20 @@
 
-import * as webllm from "https://esm.run/@mlc-ai/web-llm@0.2.88";
+import { CreateMLCEngine } from "https://esm.run/@mlc-ai/web-llm@0.2.88";
 import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs";
 
+// ==========================================
+// MEDICAL BOOK AI WEB
+// Version 1.0 - Browser AI
+// ==========================================
+
 const $ = id => document.getElementById(id);
+
 const DB_NAME = "medical-book-ai";
 const STORE = "sessions";
+const MODEL_ID = "Qwen2.5-0.5B-Instruct-q4f16_1-MLC";
 
 let engine = null;
 let pdfFile = null;
@@ -15,120 +22,145 @@ let extracted = [];
 let translated = [];
 let paused = false;
 let running = false;
+let dbPromise = null;
 
 const SYSTEM_PROMPT = `
-Bạn là chuyên gia dịch thuật y khoa Anh-Việt.
-Dịch đầy đủ, trung thành với nguyên bản.
-Không tự thêm, không bỏ ý, không tóm tắt.
-Giữ nguyên số liệu, đơn vị, công thức, tên thuốc,
-tên riêng và tên nghiệm pháp.
-Sử dụng thuật ngữ y khoa tiếng Việt chuẩn.
-Giữ nguyên tiêu đề, bảng và danh sách khi có thể.
-Nếu không chắc thuật ngữ, ghi chú [cần kiểm tra thuật ngữ].
-Chỉ trả về bản dịch tiếng Việt.
+Bạn là chuyên gia dịch thuật y khoa Anh - Việt.
+
+NHIỆM VỤ:
+- Dịch đầy đủ, trung thành với nguyên bản.
+- Không tự thêm, không bỏ ý, không tóm tắt.
+- Không tự suy diễn nội dung chuyên môn.
+- Giữ nguyên số liệu, đơn vị, công thức và tên thuốc.
+- Giữ tên riêng và tên nghiệm pháp khi cần thiết.
+- Sử dụng thuật ngữ y khoa tiếng Việt chuẩn.
+- Giữ cấu trúc tiêu đề, danh sách và nội dung bảng khi có thể.
+- Không biến nội dung mô tả thành lời khuyên điều trị.
+- Nếu không chắc thuật ngữ, ghi [CẦN KIỂM TRA THUẬT NGỮ].
+- Chỉ trả về bản dịch tiếng Việt.
 `;
 
 function status(id, message) {
-  $(id).textContent = message;
+  const element = $(id);
+  if (element) element.textContent = message;
 }
 
 function bar(id, value) {
-  $(id).style.width =
-    Math.max(0, Math.min(100, value)) + "%";
-}
-
-function setButtons() {
-  $("start").disabled = !(pdfFile && engine && !running);
-  $("pause").disabled = !running;
-  $("testTranslate").disabled = !engine;
-  $("export").disabled = translated.length === 0;
+  const element = $(id);
+  if (element) {
+    element.style.width =
+      Math.max(0, Math.min(100, value)) + "%";
+  }
 }
 
 function errorText(error) {
   return error?.message || String(error);
 }
 
-// KIỂM TRA WEBGPU VÀ DANH SÁCH MÔ HÌNH
+function setButtons() {
+  if ($("start")) {
+    $("start").disabled =
+      !(pdfFile && engine && !running);
+  }
+
+  if ($("pause")) {
+    $("pause").disabled = !running;
+  }
+
+  if ($("testTranslate")) {
+    $("testTranslate").disabled = !engine;
+  }
+
+  if ($("export")) {
+    $("export").disabled = translated.length === 0;
+  }
+}
+
+// ==========================================
+// KIỂM TRA THIẾT BỊ
+// ==========================================
+
 async function initialize() {
-  const supported = !!navigator.gpu;
+  status("gpuStatus", "Đang kiểm tra WebGPU...");
+
+  const select = $("modelSelect");
+
+  if (!navigator.gpu) {
+    status(
+      "gpuStatus",
+      "Không phát hiện WebGPU trên trình duyệt."
+    );
+
+    status(
+      "modelStatus",
+      "Thiết bị chưa đáp ứng yêu cầu chạy AI cục bộ."
+    );
+
+    if ($("loadModel")) $("loadModel").disabled = true;
+
+    return;
+  }
 
   status(
     "gpuStatus",
-    supported
-      ? "WebGPU được phát hiện. Đang kiểm tra mô hình."
-      : "Không phát hiện WebGPU. Không thể chạy AI cục bộ."
+    "Đã phát hiện WebGPU. Có thể thử tải AI."
   );
 
-  if (!supported) {
-    $("loadModel").disabled = true;
-    return;
-  }
+  if (select) {
+    select.innerHTML = "";
 
-  const models = webllm.prebuiltAppConfig?.model_list || [];
-  const select = $("modelSelect");
-
-  if (!models.length) {
-    status("modelStatus", "Không đọc được danh sách mô hình WebLLM.");
-    $("loadModel").disabled = true;
-    return;
-  }
-
-  const preferred = models.filter(m =>
-    /qwen/i.test(m.model_id) &&
-    /(0\.5b|0_5b|1\.5b)/i.test(m.model_id)
-  );
-
-  const choices = preferred.length ? preferred : models.slice(0, 20);
-
-  select.innerHTML = "";
-
-  choices.forEach(model => {
     const option = document.createElement("option");
-    option.value = model.model_id;
-    option.textContent = model.model_id;
-    select.appendChild(option);
-  });
+    option.value = MODEL_ID;
+    option.textContent = "Qwen 2.5 0.5B - bản nhẹ";
 
-  select.disabled = false;
-  $("loadModel").disabled = false;
+    select.appendChild(option);
+    select.disabled = false;
+  }
+
+  if ($("loadModel")) $("loadModel").disabled = false;
 
   status(
     "modelStatus",
-    `Đã tìm thấy ${models.length} mô hình.`
+    "Đã chọn mô hình Qwen 0.5B. Chưa tải mô hình."
   );
 }
 
-// TẢI AI
-$("loadModel").addEventListener("click", async () => {
-  const modelId = $("modelSelect").value;
+// ==========================================
+// TẢI MÔ HÌNH AI
+// ==========================================
 
-  if (!navigator.gpu || !modelId) return;
+async function loadAI() {
+  if (!navigator.gpu) {
+    status("modelStatus", "WebGPU không khả dụng.");
+    return;
+  }
+
+  if (engine) {
+    status("modelStatus", "AI đã được khởi động.");
+    return;
+  }
 
   $("loadModel").disabled = true;
 
-  status("modelStatus", "Đang tải mô hình AI...");
+  status(
+    "modelStatus",
+    "Đang khởi tạo mô hình AI..."
+  );
+
+  bar("modelBar", 0);
 
   try {
-    const appConfig = {
-      ...webllm.prebuiltAppConfig
-    };
-
-    if (!appConfig.model_list.some(m => m.model_id === modelId)) {
-      throw new Error("Mã mô hình không hợp lệ.");
-    }
-
-    engine = await webllm.CreateMLCEngine(modelId, {
-      appConfig,
+    engine = await CreateMLCEngine(MODEL_ID, {
       initProgressCallback: progress => {
-        status(
-          "modelStatus",
-          progress.text || "Đang tải mô hình..."
-        );
+        const message =
+          progress?.text || "Đang tải mô hình AI...";
 
-        bar(
-          "modelBar",
-          (progress.progress || 0) * 100
-        );
+        status("modelStatus", message);
+
+        const percent =
+          Number(progress?.progress || 0) * 100;
+
+        bar("modelBar", percent);
       }
     });
 
@@ -136,35 +168,53 @@ $("loadModel").addEventListener("click", async () => {
 
     status(
       "modelStatus",
-      "AI đã khởi động. Có thể thử dịch."
+      "AI đã khởi động thành công. Có thể dịch thử."
     );
 
   } catch (error) {
     engine = null;
 
+    console.error("WebLLM error:", error);
+
     status(
       "modelStatus",
-      "Lỗi tải AI: " + errorText(error)
+      "Không tải được AI: " + errorText(error)
     );
+
+    bar("modelBar", 0);
 
   } finally {
     $("loadModel").disabled = false;
     setButtons();
   }
-});
+}
 
-// CHỌN PDF
-$("pdfFile").addEventListener("change", event => {
-  pdfFile = event.target.files?.[0] || null;
+if ($("loadModel")) {
+  $("loadModel").addEventListener("click", loadAI);
+}
 
-  $("fileName").textContent = pdfFile
-    ? `${pdfFile.name} · ${(pdfFile.size / 1048576).toFixed(1)} MB`
-    : "Chưa chọn tài liệu";
+// ==========================================
+// CHỌN FILE PDF
+// ==========================================
 
-  setButtons();
-});
+if ($("pdfFile")) {
+  $("pdfFile").addEventListener("change", event => {
+    pdfFile = event.target.files?.[0] || null;
 
-// TRÍCH XUẤT PDF
+    if ($("fileName")) {
+      $("fileName").textContent = pdfFile
+        ? `${pdfFile.name} · ${(pdfFile.size / 1048576).toFixed(1)} MB`
+        : "Chưa chọn tài liệu";
+    }
+
+    setButtons();
+  });
+}
+
+// ==========================================
+// ĐỌC NỘI DUNG PDF
+// ==========================================
+
 async function extractPDF(file) {
   const bytes = await file.arrayBuffer();
 
@@ -175,6 +225,8 @@ async function extractPDF(file) {
   const pages = [];
 
   for (let n = 1; n <= document.numPages; n++) {
+    if (paused) break;
+
     const page = await document.getPage(n);
     const content = await page.getTextContent();
 
@@ -189,19 +241,24 @@ async function extractPDF(file) {
       text
     });
 
-    $("pageCount").textContent =
-      `${n}/${document.numPages} trang đã đọc`;
-
     status(
       "workStatus",
       `Đang đọc trang ${n}/${document.numPages}`
     );
+
+    if ($("pageCount")) {
+      $("pageCount").textContent =
+        `${n}/${document.numPages} trang đã đọc`;
+    }
   }
 
   return pages;
 }
 
-// CHIA ĐOẠN
+// ==========================================
+// CHIA VĂN BẢN THÀNH ĐOẠN
+// ==========================================
+
 function makeChunks(pages, maxChars = 1300) {
   const chunks = [];
 
@@ -213,14 +270,18 @@ function makeChunks(pages, maxChars = 1300) {
     if (!page.text) continue;
 
     const sentences =
-      page.text.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [page.text];
+      page.text.match(/[^.!?]+[.!?]+|[^.!?]+$/g)
+      || [page.text];
 
     for (const sentence of sentences) {
       const part = sentence.trim();
 
       if (!part) continue;
 
-      if (buffer && buffer.length + part.length > maxChars) {
+      if (
+        buffer &&
+        buffer.length + part.length > maxChars
+      ) {
         chunks.push({
           text: buffer,
           start,
@@ -233,7 +294,9 @@ function makeChunks(pages, maxChars = 1300) {
       if (!buffer) start = page.page;
 
       end = page.page;
-      buffer += (buffer ? " " : "") + part;
+
+      buffer +=
+        (buffer ? " " : "") + part;
     }
   }
 
@@ -248,218 +311,424 @@ function makeChunks(pages, maxChars = 1300) {
   return chunks;
 }
 
+// ==========================================
 // DỊCH Y KHOA
-async function translate(text) {
-  if (!engine) throw new Error("AI chưa được khởi động.");
+// ==========================================
 
-  const response = await engine.chat.completions.create({
-    messages: [
-      {
-        role: "system",
-        content: SYSTEM_PROMPT
-      },
-      {
-        role: "user",
-        content: "Dịch sang tiếng Việt:\n\n" + text
-      }
-    ],
-    temperature: 0.1,
-    top_p: 0.9,
-    max_tokens: 1100
-  });
+async function translate(text) {
+  if (!engine) {
+    throw new Error("AI chưa được khởi động.");
+  }
+
+  const response =
+    await engine.chat.completions.create({
+      messages: [
+        {
+          role: "system",
+          content: SYSTEM_PROMPT
+        },
+        {
+          role: "user",
+          content:
+            "Dịch đầy đủ nội dung sau sang tiếng Việt:\n\n"
+            + text
+        }
+      ],
+
+      temperature: 0.1,
+      top_p: 0.9,
+      max_tokens: 1100
+    });
 
   const result =
     response.choices?.[0]?.message?.content?.trim();
 
-  if (!result) throw new Error("AI trả về nội dung rỗng.");
+  if (!result) {
+    throw new Error("AI trả về nội dung rỗng.");
+  }
 
   return result;
 }
 
+// ==========================================
 // HIỂN THỊ BẢN DỊCH
+// ==========================================
+
 function renderOutput() {
-  $("output").textContent = translated.map((item, i) =>
-    `[Đoạn ${i + 1} · trang ${item.pageStart}-${item.pageEnd}]\n${item.translation}`
-  ).join("\n\n");
+  if (!$("output")) return;
+
+  $("output").textContent =
+    translated.map((item, i) =>
+      `[Đoạn ${i + 1} · trang ${item.pageStart}-${item.pageEnd}]\n\n${item.translation}`
+    ).join("\n\n------------------------\n\n");
 }
 
-// LƯU TIẾN ĐỘ
-async function saveProgress() {
-  const db = await new Promise((resolve, reject) => {
+// ==========================================
+// CƠ SỞ DỮ LIỆU LƯU TIẾN ĐỘ
+// ==========================================
+
+function openDatabase() {
+  if (dbPromise) return dbPromise;
+
+  dbPromise = new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, 1);
 
     request.onupgradeneeded = () => {
-      if (!request.result.objectStoreNames.contains(STORE)) {
-        request.result.createObjectStore(STORE);
+      const database = request.result;
+
+      if (!database.objectStoreNames.contains(STORE)) {
+        database.createObjectStore(STORE);
       }
     };
 
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+
+    request.onerror = () => {
+      dbPromise = null;
+      reject(request.error);
+    };
   });
 
+  return dbPromise;
+}
+
+async function saveProgress() {
+  const db = await openDatabase();
+
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, "readwrite");
+
+    tx.objectStore(STORE).put({
+      translated,
+      extracted,
+      fileName: pdfFile?.name || "",
+      savedAt: new Date().toISOString()
+    }, "latest");
+
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+}
+
+// ==========================================
+// KHÔI PHỤC TIẾN ĐỘ ĐÃ LƯU
+// ==========================================
+
+async function restoreProgress() {
   try {
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE, "readwrite");
+    const db = await openDatabase();
 
-      tx.objectStore(STORE).put({
-        translated,
-        extracted,
-        fileName: pdfFile?.name || ""
-      }, "latest");
+    const saved = await new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, "readonly");
+      const request =
+        tx.objectStore(STORE).get("latest");
 
-      tx.oncomplete = resolve;
-      tx.onerror = () => reject(tx.error);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
     });
-  } finally {
-    db.close();
+
+    if (!saved) {
+      status("workStatus", "Chưa có tiến độ đã lưu.");
+      return;
+    }
+
+    extracted = saved.extracted || [];
+    translated = saved.translated || [];
+
+    renderOutput();
+
+    if ($("chunkCount")) {
+      $("chunkCount").textContent =
+        `${extracted.length} đoạn`;
+    }
+
+    bar(
+      "workBar",
+      extracted.length
+        ? translated.length / extracted.length * 100
+        : 0
+    );
+
+    status(
+      "workStatus",
+      `Đã khôi phục ${translated.length}/${extracted.length} đoạn. Chọn lại PDF cũ để tiếp tục.`
+    );
+
+    setButtons();
+
+  } catch (error) {
+    console.error("Restore error:", error);
+
+    status(
+      "workStatus",
+      "Không khôi phục được tiến độ: " + errorText(error)
+    );
   }
 }
 
-// XỬ LÝ TOÀN BỘ SÁCH
-$("start").addEventListener("click", async () => {
-  if (!pdfFile || !engine || running) return;
+// ==========================================
+// DỊCH TOÀN BỘ SÁCH
+// ==========================================
 
-  running = true;
-  paused = false;
-  setButtons();
+if ($("start")) {
+  $("start").addEventListener("click", async () => {
+    if (!pdfFile || !engine || running) return;
 
-  try {
-    const pages = await extractPDF(pdfFile);
-    extracted = makeChunks(pages);
+    running = true;
+    paused = false;
 
-    $("chunkCount").textContent =
-      `${extracted.length} đoạn`;
+    setButtons();
 
-    if (!extracted.length) {
-      throw new Error("PDF không có văn bản để trích xuất.");
-    }
+    try {
+      const pages = await extractPDF(pdfFile);
 
-    for (let i = translated.length; i < extracted.length; i++) {
-      if (paused) break;
+      if (paused) {
+        status("workStatus", "Đã tạm dừng khi đọc PDF.");
+        return;
+      }
 
-      const chunk = extracted[i];
+      extracted = makeChunks(pages);
+
+      if ($("chunkCount")) {
+        $("chunkCount").textContent =
+          `${extracted.length} đoạn`;
+      }
+
+      if (!extracted.length) {
+        throw new Error(
+          "Không tìm thấy văn bản có thể đọc trong PDF. Có thể đây là PDF dạng ảnh cần OCR."
+        );
+      }
+
+      if (
+        translated.length > extracted.length
+      ) {
+        translated = [];
+      }
+
+      for (
+        let i = translated.length;
+        i < extracted.length;
+        i++
+      ) {
+        if (paused) break;
+
+        const chunk = extracted[i];
+
+        status(
+          "workStatus",
+          `Đang dịch đoạn ${i + 1}/${extracted.length} · trang ${chunk.start}-${chunk.end}`
+        );
+
+        const result = await translate(chunk.text);
+
+        translated.push({
+          pageStart: chunk.start,
+          pageEnd: chunk.end,
+          source: chunk.text,
+          translation: result
+        });
+
+        renderOutput();
+
+        bar(
+          "workBar",
+          translated.length / extracted.length * 100
+        );
+
+        await saveProgress();
+      }
 
       status(
         "workStatus",
-        `Đang dịch đoạn ${i + 1}/${extracted.length}`
+        paused
+          ? `Đã tạm dừng. Đã dịch ${translated.length}/${extracted.length} đoạn.`
+          : `Hoàn thành ${translated.length}/${extracted.length} đoạn.`
       );
 
-      const result = await translate(chunk.text);
+    } catch (error) {
+      console.error("Processing error:", error);
 
-      translated.push({
-        pageStart: chunk.start,
-        pageEnd: chunk.end,
-        source: chunk.text,
-        translation: result
-      });
-
-      renderOutput();
-
-      bar(
-        "workBar",
-        translated.length / extracted.length * 100
+      status(
+        "workStatus",
+        "Lỗi xử lý: " + errorText(error)
       );
 
-      await saveProgress();
+    } finally {
+      running = false;
+      setButtons();
+    }
+  });
+}
+
+// ==========================================
+// TẠM DỪNG
+// ==========================================
+
+if ($("pause")) {
+  $("pause").addEventListener("click", () => {
+    paused = true;
+
+    status(
+      "workStatus",
+      "Đang chờ hoàn tất đoạn dịch hiện tại để dừng."
+    );
+  });
+}
+
+// ==========================================
+// DỊCH THỬ
+// ==========================================
+
+if ($("testTranslate")) {
+  $("testTranslate").addEventListener(
+    "click",
+    async () => {
+      const text =
+        $("testText")?.value.trim() || "";
+
+      if (!text || !engine) return;
+
+      $("testTranslate").disabled = true;
+
+      try {
+        status(
+          "workStatus",
+          "AI đang dịch thử..."
+        );
+
+        const result = await translate(text);
+
+        if ($("output")) {
+          $("output").textContent = result;
+        }
+
+        status(
+          "workStatus",
+          "Đã dịch thử. Cần kiểm tra độ chính xác chuyên môn."
+        );
+
+      } catch (error) {
+        status(
+          "workStatus",
+          "Lỗi dịch: " + errorText(error)
+        );
+
+      } finally {
+        $("testTranslate").disabled = !engine;
+      }
+    }
+  );
+}
+
+// ==========================================
+// PHIÊN MỚI
+// ==========================================
+
+if ($("newSession")) {
+  $("newSession").addEventListener("click", async () => {
+    if (running) return;
+
+    translated = [];
+    extracted = [];
+    paused = false;
+
+    if ($("output")) {
+      $("output").textContent = "Phiên mới.";
     }
 
-    status(
-      "workStatus",
-      paused
-        ? "Đã tạm dừng."
-        : `Hoàn thành ${translated.length}/${extracted.length} đoạn.`
-    );
+    if ($("chunkCount")) {
+      $("chunkCount").textContent = "0 đoạn";
+    }
 
-  } catch (error) {
-    status(
-      "workStatus",
-      "Lỗi xử lý: " + errorText(error)
-    );
+    if ($("pageCount")) {
+      $("pageCount").textContent = "0 trang đã đọc";
+    }
 
-  } finally {
-    running = false;
+    bar("workBar", 0);
+
+    try {
+      const db = await openDatabase();
+
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE, "readwrite");
+
+        tx.objectStore(STORE).delete("latest");
+
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+      });
+
+    } catch (error) {
+      console.error("Clear session error:", error);
+    }
+
+    status("workStatus", "Đã tạo phiên mới.");
     setButtons();
-  }
-});
+  });
+}
 
-// TẠM DỪNG
-$("pause").addEventListener("click", () => {
-  paused = true;
-  status("workStatus", "Sẽ dừng sau đoạn hiện tại.");
-});
+// ==========================================
+// XUẤT BẢN DỊCH TXT
+// ==========================================
 
-// DỊCH THỬ
-$("testTranslate").addEventListener("click", async () => {
-  const text = $("testText").value.trim();
+if ($("export")) {
+  $("export").addEventListener("click", () => {
+    if (!translated.length) return;
 
-  if (!text || !engine) return;
+    const text = translated.map((item, i) =>
+      `ĐOẠN ${i + 1} · TRANG ${item.pageStart}-${item.pageEnd}\n\n${item.translation}`
+    ).join("\n\n------------------------\n\n");
 
-  $("testTranslate").disabled = true;
+    const blob = new Blob(
+      ["\uFEFF", text],
+      {
+        type: "text/plain;charset=utf-8"
+      }
+    );
 
+    const url = URL.createObjectURL(blob);
+
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = "medical-book-ai-ban-dich.txt";
+
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+
+    setTimeout(() => {
+      URL.revokeObjectURL(url);
+    }, 2000);
+  });
+}
+
+// ==========================================
+// KHỞI ĐỘNG ỨNG DỤNG
+// ==========================================
+
+async function startApplication() {
   try {
-    const result = await translate(text);
-
-    $("output").textContent = result;
+    await initialize();
+    await restoreProgress();
 
     status(
       "workStatus",
-      "Đã dịch thử. Cần kiểm tra chuyên môn."
+      "Ứng dụng đã sẵn sàng. Hãy tải AI trước khi dịch sách."
     );
 
   } catch (error) {
+    console.error("Application error:", error);
+
     status(
-      "workStatus",
-      "Lỗi dịch: " + errorText(error)
+      "modelStatus",
+      "Lỗi khởi động: " + errorText(error)
     );
-
-  } finally {
-    $("testTranslate").disabled = !engine;
   }
-});
 
-// PHIÊN MỚI
-$("newSession").addEventListener("click", () => {
-  if (running) return;
-
-  translated = [];
-  extracted = [];
-  paused = false;
-
-  $("output").textContent = "Phiên mới.";
-  $("chunkCount").textContent = "0 đoạn";
-  $("pageCount").textContent = "0 trang đã đọc";
-
-  bar("workBar", 0);
-
-  status("workStatus", "Đã tạo phiên mới.");
   setButtons();
-});
+}
 
-// XUẤT TXT
-$("export").addEventListener("click", () => {
-  if (!translated.length) return;
-
-  const text = translated.map((item, i) =>
-    `ĐOẠN ${i + 1} · TRANG ${item.pageStart}-${item.pageEnd}\n\n${item.translation}`
-  ).join("\n\n------------------------\n\n");
-
-  const blob = new Blob(
-    ["\uFEFF", text],
-    { type: "text/plain;charset=utf-8" }
-  );
-
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-
-  link.href = url;
-  link.download = "medical-book-ai-ban-dich.txt";
-  link.click();
-
-  setTimeout(() => URL.revokeObjectURL(url), 1500);
-});
-
-// KHỞI ĐỘNG
-initialize().catch(error => {
-  status("modelStatus", "Lỗi khởi tạo: " + errorText(error));
-});
+startApplication();
