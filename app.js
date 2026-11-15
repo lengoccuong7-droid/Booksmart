@@ -83,48 +83,39 @@ function setButtons() {
 async function initialize() {
   status("gpuStatus", "Đang kiểm tra WebGPU...");
 
-  const select = $("modelSelect");
-
   if (!navigator.gpu) {
-    status(
-      "gpuStatus",
-      "Không phát hiện WebGPU trên trình duyệt."
-    );
+    status("gpuStatus", "Không phát hiện WebGPU.");
+    status("modelStatus", "Thiết bị chưa hỗ trợ WebGPU.");
 
-    status(
-      "modelStatus",
-      "Thiết bị chưa đáp ứng yêu cầu chạy AI cục bộ."
-    );
-
-    if ($("loadModel")) $("loadModel").disabled = true;
-
+    if ($("loadModel")) {
+      $("loadModel").disabled = true;
+    }
     return;
   }
 
-  status(
-    "gpuStatus",
-    "Đã phát hiện WebGPU. Có thể thử tải AI."
-  );
+  status("gpuStatus", "Đã phát hiện WebGPU.");
 
-  if (select) {
-    select.innerHTML = "";
+  // Không bắt buộc phải có modelSelect trong HTML
+  if ($("modelSelect")) {
+    $("modelSelect").innerHTML = "";
 
     const option = document.createElement("option");
     option.value = MODEL_ID;
     option.textContent = "Qwen 2.5 0.5B - bản nhẹ";
 
-    select.appendChild(option);
-    select.disabled = false;
+    $("modelSelect").appendChild(option);
+    $("modelSelect").disabled = false;
   }
 
-  if ($("loadModel")) $("loadModel").disabled = false;
+  if ($("loadModel")) {
+    $("loadModel").disabled = false;
+  }
 
   status(
     "modelStatus",
-    "Đã chọn mô hình Qwen 0.5B. Chưa tải mô hình."
+    "Đã chọn Qwen 0.5B. Sẵn sàng tải mô hình."
   );
 }
-
 // ==========================================
 // TẢI MÔ HÌNH AI
 // ==========================================
